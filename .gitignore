@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.manifest
+*.spec
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+.venv-*/
+
+# PyInstaller
+*.spec
+.pyinstaller/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Audio/Video files (test files)
+*.mp3
+*.m4a
+*.wav
+*.mp4
+*.avi
+*.mkv
+*.webm
+
+# Text output files (test files)
+BV*.txt
+BV*.md
+
+# Output directory
+output/
+downloads/
+
+# Cookie files (contains sensitive data)
+*cookie*.txt
+*cookies*.txt
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.env.local
