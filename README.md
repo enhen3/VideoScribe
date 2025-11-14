@@ -1,5 +1,11 @@
 # VideoScribe - 视频转录助手
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.x](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/enhen3/VideoScribe)
+[![GitHub release](https://img.shields.io/github/v/release/enhen3/VideoScribe?include_prereleases)](https://github.com/enhen3/VideoScribe/releases)
+[![GitHub stars](https://img.shields.io/github/stars/enhen3/VideoScribe?style=social)](https://github.com/enhen3/VideoScribe/stargazers)
+
 **Bilibili / YouTube 字幕·文字稿提取工具**
 
 输入单个 **B 站 BV 号 / 链接** 或 **YouTube 视频链接**，即可自动生成结构化 Markdown 文字稿；若不存在官方字幕，会自动调用 OpenAI Whisper 进行转录。支持：
