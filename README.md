@@ -140,7 +140,7 @@ python bilibili_gui_transcriber.py
 1. `brew install python@3.12 python-tk@3.12`
 2. `python3.12 -m venv .venv-py312 && .venv-py312/bin/pip install requests yt-dlp openai-whisper pyyaml opencc-python-reimplemented pyinstaller`
 3. `chmod +x build_gui_app.sh && ./build_gui_app.sh`
-4. 双击 `dist/BilibiliTextApp.app` 即可运行（首次需在“隐私与安全性”允许）
+4. 双击 `dist/VideoScribeApp.app` 即可运行（首次需在"隐私与安全性"允许）
 
 ---
 

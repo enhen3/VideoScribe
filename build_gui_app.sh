@@ -2,7 +2,7 @@
 # 构建可双击运行的 GUI App（基于 PyInstaller）
 set -euo pipefail
 
-APP_NAME="${APP_NAME:-BilibiliTextApp}"
+APP_NAME="${APP_NAME:-VideoScribeApp}"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   if [[ -x ".venv-py312/bin/python" ]]; then
