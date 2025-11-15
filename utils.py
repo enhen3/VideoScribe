@@ -1261,6 +1261,21 @@ def process_youtube_video(
     return [ProcessResult(platform="youtube", markdown_path=markdown_path, txt_path=txt_path, meta=meta)]
 
 
+def _normalize_youtube_channel_url(url: str) -> str:
+    """规范化 YouTube 频道 URL，确保获取所有视频而不只是精选内容。"""
+    # 移除 /featured, /streams, /shorts 等后缀，使用主页或 /videos
+    # 主页会获取所有内容（包括 shorts、播放列表等）
+    url = url.rstrip('/')
+
+    # 替换特定页面为主页（会获取更多内容）
+    for suffix in ['/featured', '/streams', '/shorts', '/playlists', '/community', '/about']:
+        if url.endswith(suffix):
+            url = url[:-len(suffix)]
+            break
+
+    return url
+
+
 def _fetch_creator_video_urls_ytdlp(
     channel_url: str,
     platform: str,
@@ -1268,6 +1283,10 @@ def _fetch_creator_video_urls_ytdlp(
 ) -> List[str]:
     """使用 yt-dlp 获取博主全部视频 URL。"""
     _require_ytdlp()
+
+    # 对于 YouTube，规范化 URL 以获取所有视频
+    if platform == "youtube":
+        channel_url = _normalize_youtube_channel_url(channel_url)
     opts = {
         "quiet": True,
         "no_warnings": True,
