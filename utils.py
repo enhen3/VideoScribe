@@ -1272,8 +1272,10 @@ def _fetch_creator_video_urls_ytdlp(
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "extract_flat": True,
+        "extract_flat": "in_playlist",  # 提取播放列表中的所有项
         "force_generic_extractor": False,
+        "playlistend": None,  # 不限制播放列表结束位置
+        "ignoreerrors": True,  # 忽略单个视频错误，继续处理其他视频
     }
     if cookie_file and cookie_file.exists():
         opts["cookiefile"] = str(cookie_file)
@@ -1405,6 +1407,7 @@ def _process_video_batch(
         raise VideoProcessingError("未获取到任何视频，可能链接无效或不可访问")
 
     successful: List[ProcessResult] = []
+    skipped_existing: List[ProcessResult] = []  # 已存在的文件
     failures: List[str] = []
     total = len(video_urls)
 
@@ -1420,9 +1423,16 @@ def _process_video_batch(
                 video_url, model_name, output_root, language_mode, include_collection, write_txt, logger
             )
             if processed:
-                successful.extend(processed)
-                last_path = processed[-1].markdown_path.name if processed else "unknown"
-                _maybe_log(logger, f"   ✅ 完成：{last_path}")
+                # 检查是否是已存在的文件
+                is_existing = all(p.meta.source == "skipped" for p in processed)
+                if is_existing:
+                    skipped_existing.extend(processed)
+                    last_path = processed[-1].markdown_path.name if processed else "unknown"
+                    _maybe_log(logger, f"   ⏭️ 已存在：{last_path}")
+                else:
+                    successful.extend(processed)
+                    last_path = processed[-1].markdown_path.name if processed else "unknown"
+                    _maybe_log(logger, f"   ✅ 完成：{last_path}")
             else:
                 failures.append(error or f"{video_url} -> 未知错误")
                 _maybe_log(logger, f"   ⚠️ 跳过：{error}")
@@ -1456,9 +1466,15 @@ def _process_video_batch(
                 try:
                     processed, error = future.result()
                     if processed:
-                        successful.extend(processed)
+                        # 检查是否是已存在的文件
+                        is_existing = all(p.meta.source == "skipped" for p in processed)
                         last_path = processed[-1].markdown_path.name if processed else "unknown"
-                        safe_logger.log(f"✅ [{completed_count}/{total}] 完成：{last_path}")
+                        if is_existing:
+                            skipped_existing.extend(processed)
+                            safe_logger.log(f"⏭️ [{completed_count}/{total}] 已存在：{last_path}")
+                        else:
+                            successful.extend(processed)
+                            safe_logger.log(f"✅ [{completed_count}/{total}] 完成：{last_path}")
                     else:
                         failures.append(error or f"{video_url} -> 未知错误")
                         safe_logger.log(f"⚠️ [{completed_count}/{total}] 跳过：{error}")
@@ -1467,11 +1483,19 @@ def _process_video_batch(
                     failures.append(error_msg)
                     safe_logger.log(f"⚠️ [{completed_count}/{total}] 异常：{exc}")
 
-    _maybe_log(
-        logger,
-        f"批量完成：成功 {len(successful)} / {total}，失败 {len(failures)}。",
-    )
-    return successful, failures
+    # 显示详细统计
+    _maybe_log(logger, "")
+    _maybe_log(logger, "=" * 60)
+    _maybe_log(logger, f"📊 批量处理完成统计：")
+    _maybe_log(logger, f"   总视频数：{total}")
+    _maybe_log(logger, f"   ✅ 新处理：{len(successful)}")
+    _maybe_log(logger, f"   ⏭️ 已存在（跳过）：{len(skipped_existing)}")
+    _maybe_log(logger, f"   ⚠️ 失败/错误：{len(failures)}")
+    _maybe_log(logger, "=" * 60)
+
+    # 合并成功和已跳过的结果返回
+    all_results = successful + skipped_existing
+    return all_results, failures
 
 
 def export_creator_videos(
