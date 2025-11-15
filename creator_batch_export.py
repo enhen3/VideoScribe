@@ -33,8 +33,8 @@ def main() -> None:
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=3,
-        help="并发处理线程数（1-8），默认 3",
+        default=5,
+        help="并发处理线程数（1-8），默认 5",
     )
     parser.add_argument(
         "--no-concurrent",
@@ -50,7 +50,7 @@ def main() -> None:
 
     collection_info = detect_bilibili_collection(args.creator_url) if platform == "bilibili" else None
 
-    # 并发配置
+    # 并发配置（默认5线程以加快处理速度）
     max_workers = max(1, min(args.max_workers, 8))  # 限制在 1-8 范围内
     enable_concurrent = not args.no_concurrent
 

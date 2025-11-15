@@ -55,7 +55,7 @@ PREFERRED_LANGS = ["zh-Hans", "zh", "zh-Hant", "yue"]
 ENGLISH_LANGS = ["en", "en-us", "en-gb"]
 
 # 并发处理配置
-DEFAULT_MAX_WORKERS = 3  # 默认并发数（考虑Whisper的CPU消耗）
+DEFAULT_MAX_WORKERS = 5  # 默认并发数（优化：提高并发以加快字幕下载）
 MAX_WORKERS_LIMIT = 8  # 最大并发数限制
 ENABLE_CONCURRENT = True  # 默认启用并发
 FAV_LIST_RE = re.compile(r"/list/ml(\d+)")
@@ -246,12 +246,29 @@ def normalize_language_mode(mode: Optional[str]) -> str:
     return normalized
 
 
-def should_prefer_english(language_mode: str, texts: Iterable[Optional[str]], fallback: bool = False) -> bool:
+def should_prefer_english(language_mode: str, texts: Iterable[Optional[str]], fallback: bool = False, audio_language: Optional[str] = None) -> bool:
+    """判断是否应该优先使用英文。
+
+    优先级：
+    1. 用户明确指定语言（--lang en/zh）
+    2. 音频语言信息（audio_language 参数）
+    3. 文本内容分析（标题、描述等）
+    4. fallback 默认值
+    """
     normalized = normalize_language_mode(language_mode)
     if normalized == LANGUAGE_EN:
         return True
     if normalized == LANGUAGE_ZH:
         return False
+
+    # 如果有音频语言信息，优先使用
+    if audio_language:
+        if is_english_language(audio_language):
+            return True
+        if is_chinese_lang(audio_language):
+            return False
+
+    # 分析文本内容
     for text in texts:
         if looks_like_english(text):
             return True
@@ -279,10 +296,15 @@ def write_legacy_txt(segments: List[Segment], output_dir: Path, base_name: str) 
     return txt_path
 
 
-def generate_markdown(meta: VideoMeta, segments: List[Segment], output_dir: Path) -> Path:
+def generate_markdown(meta: VideoMeta, segments: List[Segment], output_dir: Path, skip_existing: bool = True) -> Path:
     """根据模板生成 Markdown 文件。"""
     filename = f"{meta.video_id}_{slugify(meta.title)}.md"
     output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = output_dir / filename
+
+    # 检查文件是否已存在
+    if skip_existing and md_path.exists():
+        return md_path
     metadata = {
         "platform": meta.platform,
         "video_id": meta.video_id,
@@ -336,9 +358,9 @@ def generate_markdown(meta: VideoMeta, segments: List[Segment], output_dir: Path
         lines.append(text)
         lines.append("")
 
-    md_path = output_dir / filename
-    md_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
-    return md_path
+    final_md_path = output_dir / filename
+    final_md_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return final_md_path
 
 
 def parse_timestamp_to_seconds(value: str) -> float:
@@ -857,6 +879,18 @@ def process_bilibili_video(
     base_duration = format_timestamp(view_data.get("duration"))
     output_dir = ensure_output_dir("bilibili", uploader, output_root)
 
+    # 尝试从标签或描述中推断音频语言
+    audio_lang_hint = None
+    tags = view_data.get("tags") or []
+    for tag in tags:
+        tag_lower = str(tag).lower()
+        if "english" in tag_lower or "英语" in tag_lower:
+            audio_lang_hint = "en"
+            break
+        if "中文" in tag_lower or "chinese" in tag_lower:
+            audio_lang_hint = "zh"
+            break
+
     prefer_english = should_prefer_english(
         language_mode,
         [
@@ -865,6 +899,7 @@ def process_bilibili_video(
             view_data.get("dynamic"),
         ],
         fallback=False,
+        audio_language=audio_lang_hint,
     )
 
     pages = _collect_bilibili_pages(view_data)
@@ -889,6 +924,27 @@ def process_bilibili_video(
         page_url = f"{base_url}?p={page_number}"
         video_id = bvid if total_pages == 1 else f"{bvid}-P{page_number:02d}"
 
+        # 检查文件是否已存在
+        expected_filename = f"{video_id}_{slugify(full_title)}.md"
+        expected_path = output_dir / expected_filename
+        if expected_path.exists():
+            _maybe_log(logger, f"⏭️ 跳过已存在：{expected_filename}")
+            meta = VideoMeta(
+                platform="bilibili",
+                video_id=video_id,
+                title=full_title,
+                uploader=uploader,
+                upload_date=upload_date,
+                source="skipped",
+                url=page_url,
+                duration=duration,
+                processed_at=datetime.now().strftime("%Y-%m-%d"),
+                original_language="Unknown",
+                language="Unknown",
+            )
+            results.append(ProcessResult(platform="bilibili", markdown_path=expected_path, txt_path=None, meta=meta))
+            continue
+
         segments: List[Segment] = []
         subtitle_entry = _fetch_bilibili_subtitle_entry(
             bvid,
@@ -899,12 +955,16 @@ def process_bilibili_video(
         source = "official_subtitle"
         text_language = "English" if prefer_english else DEFAULT_LANGUAGE
         if subtitle_entry:
-            convert_flag = is_chinese_lang(subtitle_entry.get("lan"))
+            subtitle_lang = subtitle_entry.get("lan") or "unknown"
+            convert_flag = is_chinese_lang(subtitle_lang)
             text_language = DEFAULT_LANGUAGE if convert_flag else "English"
+            _maybe_log(logger, f"📄 找到官方字幕（{subtitle_lang}），跳过音频转录")
             segments = _download_bilibili_subtitle_segments(
                 subtitle_entry,
                 convert_to_simplified=convert_flag,
             )
+        else:
+            _maybe_log(logger, f"⚠️ 未找到官方字幕，将使用 Whisper 转录音频")
 
         audio_path: Optional[Path] = None
         if not segments:
@@ -1003,7 +1063,11 @@ def _download_youtube_subtitles(
     logger: Optional[Callable[[str], None]],
 ) -> Tuple[List[Segment], Optional[str]]:
     _require_ytdlp()
-    requested_langs = list(dict.fromkeys(PREFERRED_LANGS + ENGLISH_LANGS))
+    # 根据 prefer_english 调整语言优先级（优化：优先下载匹配语言的字幕）
+    if prefer_english:
+        requested_langs = list(dict.fromkeys(ENGLISH_LANGS + PREFERRED_LANGS))
+    else:
+        requested_langs = list(dict.fromkeys(PREFERRED_LANGS + ENGLISH_LANGS))
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -1018,8 +1082,9 @@ def _download_youtube_subtitles(
     try:
         with YoutubeDL(opts) as ydl:
             ydl.download([video_url])
-    except Exception:
-        return [], None
+    except Exception as e:
+        # 允许部分下载失败（例如请求不存在的语言），只要有任何字幕下载成功即可
+        _maybe_log(logger, f"字幕下载时出现错误（将尝试使用已下载的字幕）: {str(e)[:100]}")
 
     vtt_files = list(temp_dir.glob("*.vtt"))
     lang_map: Dict[str, Path] = {}
@@ -1095,14 +1160,38 @@ def process_youtube_video(
     original_language = info.get("language") or info.get("original_language") or "unknown"
     output_dir = ensure_output_dir("youtube", uploader, output_root)
 
+    video_title = info.get("title") or video_id
+    # 检查文件是否已存在
+    expected_filename = f"{video_id}_{slugify(video_title)}.md"
+    expected_path = output_dir / expected_filename
+    if expected_path.exists():
+        _maybe_log(logger, f"⏭️ 跳过已存在：{expected_filename}")
+        meta = VideoMeta(
+            platform="youtube",
+            video_id=video_id,
+            title=video_title,
+            uploader=uploader,
+            upload_date=_fmt_upload_date_from_str(info.get("upload_date")),
+            source="skipped",
+            url=info.get("webpage_url") or video_url,
+            duration=duration,
+            processed_at=datetime.now().strftime("%Y-%m-%d"),
+            original_language=original_language,
+            language="Unknown",
+        )
+        return [ProcessResult(platform="youtube", markdown_path=expected_path, txt_path=None, meta=meta)]
+
+    # YouTube 提供更准确的语言信息
+    audio_lang = info.get("audio_language") or info.get("language") or original_language
+
     prefer_english = should_prefer_english(
         language_mode,
         [
-            original_language,
             info.get("title"),
             info.get("description"),
         ],
         fallback=is_english_language(original_language),
+        audio_language=audio_lang,
     )
 
     segments: List[Segment] = []
@@ -1120,6 +1209,9 @@ def process_youtube_video(
     if segments:
         convert_flag = is_chinese_lang(subtitle_lang)
         text_language = DEFAULT_LANGUAGE if convert_flag else "English"
+        _maybe_log(logger, f"📄 找到官方字幕（{subtitle_lang}），跳过音频转录")
+    else:
+        _maybe_log(logger, f"⚠️ 未找到官方字幕，将使用 Whisper 转录音频")
     source = "official_subtitle" if segments else "whisper"
 
     audio_path: Optional[Path] = None
