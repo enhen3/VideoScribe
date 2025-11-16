@@ -348,7 +348,10 @@ def generate_markdown(meta: VideoMeta, segments: List[Segment], output_dir: Path
         "",
     ]
 
-    for segment in sorted(segments, key=lambda seg: seg.start):
+    # 去除重复的字幕片段
+    deduplicated_segments = deduplicate_segments(segments)
+
+    for segment in deduplicated_segments:
         start_ts = format_timestamp(segment.start)
         end_ts = format_timestamp(segment.end)
         text = segment.text.strip()
@@ -413,6 +416,60 @@ def parse_subtitle_text(text: str) -> List[Segment]:
             segments.append(Segment(start=start, end=end or (start + 1), text=combined))
 
     return segments
+
+
+def deduplicate_segments(segments: List[Segment]) -> List[Segment]:
+    """去除重复和重叠的字幕片段。
+
+    YouTube 自动生成的字幕经常有重叠，每个新片段都包含前一个片段的部分内容。
+    这个函数会移除：
+    1. 开始时间=结束时间的片段（通常是不完整的片段）
+    2. 文本完全被其他时间重叠的片段包含的较短片段
+    3. 完全重复的片段
+    """
+    if not segments:
+        return []
+
+    # 第一步：移除无效片段（空文本或时间点相同的片段）
+    valid_segments = []
+    for seg in segments:
+        text = seg.text.strip()
+        # 跳过空文本或开始时间=结束时间的片段
+        if not text or seg.start == seg.end:
+            continue
+        valid_segments.append(Segment(start=seg.start, end=seg.end, text=text))
+
+    if not valid_segments:
+        return []
+
+    # 第二步：按开始时间和文本长度排序（同一时间段，较长的文本在前）
+    sorted_segments = sorted(valid_segments, key=lambda seg: (seg.start, -len(seg.text)))
+
+    # 第三步：去除冗余片段
+    result = []
+    for seg in sorted_segments:
+        is_redundant = False
+
+        # 检查是否被已经添加的片段包含
+        for existing in result:
+            # 检查时间是否重叠
+            time_overlap = not (seg.end <= existing.start or seg.start >= existing.end)
+
+            # 如果时间重叠，且当前片段的文本被已存在的片段完全包含，则视为冗余
+            if time_overlap and seg.text in existing.text and len(seg.text) < len(existing.text):
+                is_redundant = True
+                break
+
+            # 如果文本完全相同，也视为冗余（即使时间略有不同）
+            if seg.text == existing.text:
+                is_redundant = True
+                break
+
+        if not is_redundant:
+            result.append(seg)
+
+    # 按开始时间重新排序后返回
+    return sorted(result, key=lambda seg: seg.start)
 
 
 def download_text(url: str) -> str:
